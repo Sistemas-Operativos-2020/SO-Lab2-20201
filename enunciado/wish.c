@@ -12,9 +12,10 @@ int numItems, numPaths = 1;
 char  ** items;
 char *shellPaths[] =  {"/bin/"};
 
-int parser(char *string, char ***items, ssize_t lineSize);
+void procesarItems();
 void salir();
 void ejecutarComando();
+int parser(char *string, char ***items, ssize_t lineSize);
 
 int main(int argc, char ** argv){
 	
@@ -31,17 +32,37 @@ int main(int argc, char ** argv){
 			lineSize = getline(&linea, &len, stdin);
 			numItems = parser(linea, &items, lineSize);
 
-			if(strcmp(items[0], "exit") == 0){
-				salir();
-			}
-			else{
-				ejecutarComando();
-			}
+			procesarItems();
 		}
 	}
 	// BATCH MODE
 	else if(argc == 2){
-		printf("batch mode\n");
+
+		FILE *file;
+		char *linea;
+		size_t len = 0;
+		ssize_t lineSize = 0;
+
+		file = fopen(argv[1], "r");
+
+		// Si no se abre el archivo
+		if(!file){
+			// Error
+			printf("No se pudo abrir el archivo\n");
+			exit(1);
+		}
+
+		lineSize = getline(&linea, &len, file);
+
+		while (lineSize >= 0){
+
+			numItems = parser(linea, &items, lineSize);
+
+			procesarItems();
+
+			lineSize = getline(&linea, &len, file);
+		}
+
 	}
 	// ERROR
 	else{
@@ -49,6 +70,16 @@ int main(int argc, char ** argv){
 		exit(1);
 	}
 	exit(0);
+}
+
+// Método para procesar los comandos luego de leerlos
+void procesarItems(){
+	if(strcmp(items[0], "exit") == 0){
+		salir();
+	}
+	else{
+		ejecutarComando();
+	}
 }
 
 // Método para salir del sistema
