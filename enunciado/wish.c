@@ -5,19 +5,24 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
-//  {}  \n  []
+//  {}  \n  []    ||
 // gcc -o wish wish.c -Wall -Werror
 
-int numItems, numPaths = 1;
+int numItems, numPaths;
 char  ** items;
-char *shellPaths[] =  {"/bin/"};
+char **shellPaths;
 
 void procesarItems();
 void salir();
+void cambiarDir();
+void addPath();
 void ejecutarComando();
-int parser(char *string, char ***items, ssize_t lineSize);
+int parser(char *string, ssize_t lineSize);
 
 int main(int argc, char ** argv){
+	numPaths = 1;
+	shellPaths = malloc((numPaths) * sizeof(char*));
+	shellPaths[0] = "/bin/";
 	
 	// INTERACTIVE MODE
 	if(argc == 1){
@@ -30,7 +35,7 @@ int main(int argc, char ** argv){
 		while(seguir == 1){
 			printf("wish> ");
 			lineSize = getline(&linea, &len, stdin);
-			numItems = parser(linea, &items, lineSize);
+			numItems = parser(linea, lineSize);
 
 			procesarItems();
 		}
@@ -56,7 +61,7 @@ int main(int argc, char ** argv){
 
 		while (lineSize >= 0){
 
-			numItems = parser(linea, &items, lineSize);
+			numItems = parser(linea, lineSize);
 
 			procesarItems();
 
@@ -77,19 +82,68 @@ void procesarItems(){
 	if(strcmp(items[0], "exit") == 0){
 		salir();
 	}
+	else if(strcmp(items[0], "cd") == 0){
+		cambiarDir();
+	}
+	else if(strcmp(items[0], "path") == 0){
+		addPath();
+	}
 	else{
 		ejecutarComando();
 	}
+
+	free(items);
+	numItems = 0;
 }
 
 // Método para salir del sistema
 void salir(){
-	free(items);
+	if(numItems > 1){
+		// Error
+		printf("Comando exit no recibe argmentos\n");
+		return;
+	}
+
 	exit(0);
+}
+
+// Método para cambiar el directorio de trabajo
+void cambiarDir(){
+	if(numItems > 2 || numItems == 1){
+		// Error
+		printf("Comando cd debe tener un solo argmento\n");
+		return;
+	}
+
+	if(chdir(items[1]) != 0){
+		// Error 
+		printf("Ocurrió un error al cambiar el directorio actual\n");
+	}		
+}
+
+// Método para sobreescribir el shell path
+void addPath(){
+	numPaths = numItems - 1;
+
+	char **newPaths = malloc((numPaths) * sizeof(char*));
+
+	for(int i = 0; i < numPaths; i++){
+		strcpy(newPaths[i], items[i+1]);
+	}
+	
+	free(shellPaths);
+	shellPaths = newPaths;
 }
 
 // Método para ejecutar comandos externos
 void ejecutarComando(){
+
+	// No hay shell path de búsqueda
+	if(numPaths == 0){
+		// Error 
+		printf("No se puden ejecutar comandos externos\n");
+		return;
+	}
 
 	char *path, *com =  (char *) malloc(strlen(items[0]) + 1);
 	
@@ -105,7 +159,7 @@ void ejecutarComando(){
 		if(access(path, X_OK) == 0)
 			break;
 
-		// Si no se encuentra directorio se termina la ejecución
+		// Si no se encuentra directorio no se ejecuta el comando
 		if(i == (numPaths - 1)){
 			free(com);
 			free(path);
@@ -137,7 +191,7 @@ void ejecutarComando(){
 }
 
 // Método para obtener los argumentos
-int parser(char *string, char ***items, ssize_t lineSize){
+int parser(char *string, ssize_t lineSize){
 	char *found, **words;
 	int num = 1;
 
@@ -173,6 +227,6 @@ int parser(char *string, char ***items, ssize_t lineSize){
 	// Último argumento como nulo
 	words[i] = NULL;
 	
-	*items = words;
+	items = words;
 	return num;
 }
