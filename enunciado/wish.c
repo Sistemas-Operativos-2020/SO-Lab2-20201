@@ -7,10 +7,13 @@
 
 //  {}  \n  []    ||
 // gcc -o wish wish.c -Wall -Werror
+// ./wish
+// ./test-wish.sh
 
 int numItems, numPaths;
 char  ** items;
 char **shellPaths;
+char error_message[30] = "An error has occurred\n";
 
 void procesarItems();
 void salir();
@@ -53,7 +56,7 @@ int main(int argc, char ** argv){
 		// Si no se abre el archivo
 		if(!file){
 			// Error
-			printf("No se pudo abrir el archivo\n");
+			write(STDERR_FILENO, error_message, strlen(error_message));
 			exit(1);
 		}
 
@@ -71,7 +74,7 @@ int main(int argc, char ** argv){
 	}
 	// ERROR
 	else{
-		printf("Demasiados argumentos\n");
+		write(STDERR_FILENO, error_message, strlen(error_message));
 		exit(1);
 	}
 	exit(0);
@@ -100,7 +103,7 @@ void procesarItems(){
 void salir(){
 	if(numItems > 1){
 		// Error
-		printf("Comando exit no recibe argmentos\n");
+		write(STDERR_FILENO, error_message, strlen(error_message));
 		return;
 	}
 
@@ -111,13 +114,13 @@ void salir(){
 void cambiarDir(){
 	if(numItems > 2 || numItems == 1){
 		// Error
-		printf("Comando cd debe tener un solo argmento\n");
+		write(STDERR_FILENO, error_message, strlen(error_message));
 		return;
 	}
 
 	if(chdir(items[1]) != 0){
 		// Error 
-		printf("Ocurrió un error al cambiar el directorio actual\n");
+		write(STDERR_FILENO, error_message, strlen(error_message));
 	}		
 }
 
@@ -126,12 +129,16 @@ void addPath(){
 	numPaths = numItems - 1;
 
 	char **newPaths = malloc((numPaths) * sizeof(char*));
+	char *path;
 
 	for(int i = 0; i < numPaths; i++){
-		strcpy(newPaths[i], items[i+1]);
+		path = (char *) malloc(strlen(items[i+1]) + 1);
+		//strcat(path, "/");
+		strcat(path, items[i+1]);
+		strcat(path, "/");
+		newPaths[i] = path;
 	}
 	
-	free(shellPaths);
 	shellPaths = newPaths;
 }
 
@@ -141,7 +148,7 @@ void ejecutarComando(){
 	// No hay shell path de búsqueda
 	if(numPaths == 0){
 		// Error 
-		printf("No se puden ejecutar comandos externos\n");
+		write(STDERR_FILENO, error_message, strlen(error_message));
 		return;
 	}
 
@@ -153,17 +160,14 @@ void ejecutarComando(){
 	for(int i = 0; i < numPaths; i++){
 		path = (char *) malloc(strlen(shellPaths[i]) + 1);
 		strcpy(path, shellPaths[i]);
-
-		strcat(path, com);	
+		strcat(path, com);
 
 		if(access(path, X_OK) == 0)
 			break;
 
 		// Si no se encuentra directorio no se ejecuta el comando
 		if(i == (numPaths - 1)){
-			free(com);
-			free(path);
-			printf("Comando no reconocido o no se pudo ejecutar\n");
+			write(STDERR_FILENO, error_message, strlen(error_message));
 			return;
 		}
 	}
@@ -172,9 +176,9 @@ void ejecutarComando(){
 
 	if(pid == 0){
 		// Hijo
-		if(execvp(com, items)){
+		if(execvp(path, items)){
 			// Error
-			printf("Ocurrió un error al ejecutar el comando\n");
+			write(STDERR_FILENO, error_message, strlen(error_message));
 		}
 	}
 	else if(pid > 0){
@@ -183,7 +187,7 @@ void ejecutarComando(){
 	}
 	else{
 		// Error
-		printf("No se pudo crear un proceso hijo\n");
+		write(STDERR_FILENO, error_message, strlen(error_message));
 	}
 	
 	free(com);
