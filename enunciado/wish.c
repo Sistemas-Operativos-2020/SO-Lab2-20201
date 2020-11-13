@@ -4,13 +4,15 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 //  {}  \n  []    ||
 // gcc -o wish wish.c -Wall -Werror
 // ./wish
 // ./test-wish.sh
 
-int numItems, numPaths;
+int numItems, numPaths, redir;
 char  ** items;
 char **shellPaths;
 char error_message[30] = "An error has occurred\n";
@@ -29,16 +31,28 @@ int main(int argc, char ** argv){
 	
 	// INTERACTIVE MODE
 	if(argc == 1){
-		int seguir = 1;
 		char *linea;
 		size_t len = 0;
 		ssize_t lineSize = 0;
 		
 		// Ciclo principal
-		while(seguir == 1){
+		while(1){
 			printf("wish> ");
 			lineSize = getline(&linea, &len, stdin);
+
+			if(lineSize <= 1){
+				continue;
+			}
+
 			numItems = parser(linea, lineSize);
+
+			if(numItems == -1){
+				write(STDERR_FILENO, error_message, strlen(error_message));
+				continue;
+			}
+			
+			if(numItems == 0)
+				continue;
 
 			procesarItems();
 		}
@@ -62,9 +76,19 @@ int main(int argc, char ** argv){
 
 		lineSize = getline(&linea, &len, file);
 
-		while (lineSize >= 0){
-
+		while (lineSize >= 0){		
 			numItems = parser(linea, lineSize);
+
+			if(numItems == -1){
+				write(STDERR_FILENO, error_message, strlen(error_message));
+				lineSize = getline(&linea, &len, file);
+				continue;
+			}
+
+			if(numItems == 0){
+				lineSize = getline(&linea, &len, file);
+				continue;
+			}
 
 			procesarItems();
 
@@ -133,7 +157,6 @@ void addPath(){
 
 	for(int i = 0; i < numPaths; i++){
 		path = (char *) malloc(strlen(items[i+1]) + 1);
-		//strcat(path, "/");
 		strcat(path, items[i+1]);
 		strcat(path, "/");
 		newPaths[i] = path;
@@ -174,20 +197,60 @@ void ejecutarComando(){
 	// Se puede ejecutar el comando
 	int pid = fork();
 
-	if(pid == 0){
-		// Hijo
-		if(execvp(path, items)){
+	// Sin redirección
+	if(redir == 0){
+		if(pid == 0){
+			// Hijo
+			if(execvp(path, items)){
+				// Error
+				write(STDERR_FILENO, error_message, strlen(error_message));
+			}
+		}
+		else if(pid > 0){
+			// Padre
+			wait(NULL);
+		}
+		else{
 			// Error
 			write(STDERR_FILENO, error_message, strlen(error_message));
 		}
 	}
-	else if(pid > 0){
-		// Padre
-		wait(NULL);
-	}
+	// Con redirección
 	else{
-		// Error
-		write(STDERR_FILENO, error_message, strlen(error_message));
+		if(pid == 0){
+			// Hijo
+
+			int fp;
+
+			if((fp = open(items[numItems], O_WRONLY | O_CREAT |O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) == -1){
+				// Error
+				write(STDERR_FILENO, error_message, strlen(error_message));
+				return;
+			}
+
+			if(dup2(fp, STDOUT_FILENO) == -1){
+				// Error
+				write(STDERR_FILENO, error_message, strlen(error_message));
+				return;
+			}
+
+			close(fp);
+
+			items[numItems] = NULL;
+
+			if(execvp(path, items)){
+				// Error
+				write(STDERR_FILENO, error_message, strlen(error_message));
+			}
+		}
+		else if(pid > 0){
+			// Padre
+			wait(NULL);
+		}
+		else{
+			// Error
+			write(STDERR_FILENO, error_message, strlen(error_message));
+		}
 	}
 	
 	free(com);
@@ -197,7 +260,9 @@ void ejecutarComando(){
 // Método para obtener los argumentos
 int parser(char *string, ssize_t lineSize){
 	char *found, **words;
-	int num = 1;
+
+	int num = 1, redirFiles = 0, len = lineSize;
+	redir = 0;
 
 	string[lineSize - 1] = '\0';
 
@@ -208,14 +273,35 @@ int parser(char *string, ssize_t lineSize){
 	}	
 
 	// Eliminar espacios del principio
-	while(*string == ' ' )
-		string ++;
+	while(*string == ' ' ){
+		string++;
+		len--;
+	}
+
+	if(len <= 1)
+		return  0;
 
 	// Contar número de palabras
 	for(int i = 1; string[i] != '\0'; i++){
-		if( string[i] != ' ' &&  string[i-1] == ' ')
+		// Error no más de un operador
+		if(string[i] == '>' && redir == 1)
+			return -1;
+
+		if(string[i] == '>'){
+			redir = 1;
+			string[i] = ' ';
+		}
+
+		if( string[i] != ' ' &&  string[i-1] == ' ' && redir == 0)
 			num++;
+
+		if(string[i] != ' ' &&  string[i-1] == ' ' && redir == 1)
+			redirFiles++;
 	}
+
+	// Error más de 1 archivo o ninguno para redirigir
+	if(redir == 1 && (redirFiles > 1 || redirFiles == 0))
+		return -1;
 
 	// Reservar espacio en memoria
 	words = malloc((num + 1) * sizeof(char*));
@@ -229,7 +315,8 @@ int parser(char *string, ssize_t lineSize){
 	}
 
 	// Último argumento como nulo
-	words[i] = NULL;
+	if(redir == 0)
+		words[i] = NULL;
 	
 	items = words;
 	return num;
