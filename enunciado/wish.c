@@ -12,7 +12,7 @@
 // ./wish
 // ./test-wish.sh
 
-int numItems, numPaths, redir;
+int numItems, numPaths, redir, parallel;
 char  ** items;
 char **shellPaths;
 char error_message[30] = "An error has occurred\n";
@@ -21,8 +21,9 @@ void procesarItems();
 void salir();
 void cambiarDir();
 void addPath();
-void ejecutarComando();
+void ejecutarComando(int pid);
 int parser(char *string, ssize_t lineSize);
+void parallelComs(char *string, ssize_t lineSize);
 
 int main(int argc, char ** argv){
 	numPaths = 1;
@@ -46,6 +47,9 @@ int main(int argc, char ** argv){
 
 			numItems = parser(linea, lineSize);
 
+			if(parallel == 1)
+				parallelComs(linea, lineSize);
+
 			if(numItems == -1){
 				write(STDERR_FILENO, error_message, strlen(error_message));
 				continue;
@@ -54,7 +58,7 @@ int main(int argc, char ** argv){
 			if(numItems == 0)
 				continue;
 
-			procesarItems();
+			procesarItems(-1);
 		}
 	}
 	// BATCH MODE
@@ -79,6 +83,9 @@ int main(int argc, char ** argv){
 		while (lineSize >= 0){		
 			numItems = parser(linea, lineSize);
 
+			if(parallel == 1)
+				parallelComs(linea, lineSize);
+
 			if(numItems == -1){
 				write(STDERR_FILENO, error_message, strlen(error_message));
 				lineSize = getline(&linea, &len, file);
@@ -90,7 +97,7 @@ int main(int argc, char ** argv){
 				continue;
 			}
 
-			procesarItems();
+			procesarItems(-1);
 
 			lineSize = getline(&linea, &len, file);
 		}
@@ -105,7 +112,7 @@ int main(int argc, char ** argv){
 }
 
 // Método para procesar los comandos luego de leerlos
-void procesarItems(){
+void procesarItems(int pid){
 	if(strcmp(items[0], "exit") == 0){
 		salir();
 	}
@@ -116,7 +123,7 @@ void procesarItems(){
 		addPath();
 	}
 	else{
-		ejecutarComando();
+		ejecutarComando(pid);
 	}
 
 	free(items);
@@ -166,7 +173,7 @@ void addPath(){
 }
 
 // Método para ejecutar comandos externos
-void ejecutarComando(){
+void ejecutarComando(int pid){
 
 	// No hay shell path de búsqueda
 	if(numPaths == 0){
@@ -195,7 +202,8 @@ void ejecutarComando(){
 		}
 	}
 	// Se puede ejecutar el comando
-	int pid = fork();
+	if(parallel == 0)
+		pid = fork();
 
 	// Sin redirección
 	if(redir == 0){
@@ -252,7 +260,7 @@ void ejecutarComando(){
 			write(STDERR_FILENO, error_message, strlen(error_message));
 		}
 	}
-	
+
 	free(com);
 	free(path);
 }
@@ -263,9 +271,17 @@ int parser(char *string, ssize_t lineSize){
 
 	int num = 1, redirFiles = 0, len = lineSize;
 	redir = 0;
+	parallel = 0;
 
 	string[lineSize - 1] = '\0';
 
+	// Reconocer comandos paralelos
+	for(int i = 0; string[i] != '\0'; i++){
+		if(string[i] == '&'){
+			parallel = 1;
+			return 0;
+		}
+	}
 	// Convertir tabulaciones y saltos de linea en espacio
 	for(int i = 0; i < lineSize; i++){
 		if(string[i] == '\t' || string[i] == '\n')
@@ -320,4 +336,93 @@ int parser(char *string, ssize_t lineSize){
 	
 	items = words;
 	return num;
+}
+
+// Método para ejecutar los comando paralelos
+void parallelComs(char *string, ssize_t lineSize){
+
+	char *found;
+	int nComs = 0;
+
+	string[lineSize - 1] = '\0';
+
+	// Convertir tabulaciones y saltos de linea en espacio
+	for(int i = 0; i < lineSize; i++){
+		if(string[i] == '\t' || string[i] == '\n')
+			 string[i] = ' ';
+	}	
+
+	char *temp = malloc(strlen(string) + 1);
+	strcpy(temp, string);
+
+	// Contar cantidad de comandos a ejecutar
+	while((found = strsep(&temp, "&")) != NULL){
+		if(*found != '\0'){	
+			// Eliminar espacios del principio
+			while(*found == ' ' ){
+				found++;
+			}
+			if(strlen(found) > 0)
+				nComs++;
+		}			
+	}
+
+	if(nComs == 0){
+		return;
+	}
+
+	char **comsPar = malloc(nComs * sizeof(char*));
+
+	int i = 0;
+	// Separar comandos
+	while((found = strsep(&string, "&")) != NULL){
+		if(*found != '\0'){	
+			// Eliminar espacios del principio
+			while(*found == ' ' ){
+				found++;
+			}
+
+			if(strlen(found) > 0){				
+				comsPar[i] = found;
+				i++;
+			}	
+		}			
+	}
+
+	// Crear un proceso para cada comando y ejecutarlo 
+	int pid;
+	char *linea;
+	ssize_t lSize;
+	for(int i = 0; i < nComs; i++){
+		pid = fork();
+
+		if(pid == 0){
+			// Hijo
+			lSize = strlen(comsPar[i]) + 1;
+			linea = malloc(lSize);
+			linea = comsPar[i];
+
+			numItems = parser(linea, lSize);
+			
+			if(numItems == -1){
+				write(STDERR_FILENO, error_message, strlen(error_message));
+				continue;
+			}
+
+			parallel = 1;
+			procesarItems(pid);
+		}		
+		else if(pid < 0){
+			// Error
+			write(STDERR_FILENO, error_message, strlen(error_message));
+		}
+	}
+
+	// Padre que espere por que los hijos terminen
+	if(pid > 0){
+		// Padre
+		for(int i = 0 ; i < nComs; i++)
+			wait(NULL);
+	}
+	numItems = 0;
 }
